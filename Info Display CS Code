@@ -161,8 +161,8 @@ namespace Info_Display
             }
         }
 
-        [Display(Name = "Pop-up Open Positions", GroupName = "Global Settings")]
-        public bool ShowActivePosition { get; set; } = true;
+        [Display(Name = "Pop-up Open Orders", GroupName = "Global Settings")]
+        public bool ShowOpenOrders { get; set; } = true;
 
         [Display(Name = "Show Today's Stats", GroupName = "Global Settings")]
         public bool ShowTodaysStats { get; set; } = true;
@@ -199,7 +199,7 @@ namespace Info_Display
         [Display(Name = "Show Worst Trade", GroupName = "Stats Configuration")]
         public bool StatShowWorstTrade { get; set; } = true;
 
-        
+
 
         // --- TRADE VISUALIZATION SETTINGS ---
 
@@ -284,7 +284,7 @@ namespace Info_Display
 
         [Display(Name = "Profit Target ($)", GroupName = "Risk Management", Order = 6)]
         [Range(0, 1000000)]
-        public int ProfitTarget { get; set; } = 3000;  
+        public int ProfitTarget { get; set; } = 3000;
 
         [Display(Name = "Daily Loss Limit ($)", GroupName = "Risk Management")]
         [Range(0, 100000)]
@@ -458,8 +458,11 @@ namespace Info_Display
             var position = TradingManager?.Position;
             decimal currentVolume = position == null ? 0m : Math.Abs(position.Volume);
 
-            var lines = BuildLines(portfolio, currentVolume);
-            if (lines.Count == 0)
+            // Construct our layers dynamically
+            var mainLines = BuildLines(portfolio, currentVolume);
+            var orderLines = ShowOpenOrders ? BuildOrderLines(portfolio) : new List<DisplayLine>();
+
+            if (mainLines.Count == 0)
                 return;
 
             var lineHeight = (int)context.MeasureString("A", _font).Height;
@@ -467,7 +470,8 @@ namespace Info_Display
             var maxLabelWidth = 0;
             var maxValueWidth = 0;
 
-            foreach (var line in lines)
+            // Measure column widths based on BOTH the stats and open orders together for perfect alignment
+            foreach (var line in mainLines.Concat(orderLines))
             {
                 var labelWidth = (int)context.MeasureString(line.Label, _font).Width;
                 var valueWidth = (int)context.MeasureString(line.Value, _font).Width;
@@ -478,9 +482,11 @@ namespace Info_Display
                     maxValueWidth = valueWidth;
             }
 
-            var rectWidth = maxLabelWidth + ColumnSpacing + maxValueWidth + Padding * 2; // ensures slider has enough width
-            int sliderExtraHeight = (ShowPnlSlider) ? 45 : 0;
-            var rectHeight = (lines.Count * lineHeight) + 20 + (Padding * 2);
+            var rectWidth = maxLabelWidth + ColumnSpacing + maxValueWidth + Padding * 2;
+            int sliderExtraHeight = ShowPnlSlider ? 20 : 0;
+
+            // The master bounding box scales perfectly around all 3 elements toggled together
+            var rectHeight = (mainLines.Count * lineHeight) + sliderExtraHeight + (orderLines.Count * lineHeight) + (Padding * 2);
 
             var x = CalculateXPosition(rectWidth);
             var y = CalculateYPosition(rectHeight);
@@ -488,67 +494,67 @@ namespace Info_Display
             var rectangle = new Rectangle(x, y, rectWidth, rectHeight);
             context.FillRectangle(_backgroundColor, rectangle);
 
-            // Draw text
-            var textRect = new Rectangle(x + Padding, y + Padding, rectWidth - Padding * 2, rectHeight - Padding * 2);
-            DrawColoredText(context, lines, textRect, maxLabelWidth);
+            // 1. Draw Main Text Stats
+            var textRect = new Rectangle(x + Padding, y + Padding, rectWidth - Padding * 2, mainLines.Count * lineHeight);
+            DrawColoredText(context, mainLines, textRect, maxLabelWidth);
 
-            // Draw Visual PnL Slider if enabled
+            int currentY = textRect.Y + textRect.Height;
+
+            // 2. Draw Visual PnL Slider directly underneath Main Text
             if (ShowPnlSlider)
             {
-                DrawPnlSlider(context, textRect, portfolio.ClosedPnL, DailyLossLimit, ProfitTarget);
+                DrawPnlSlider(context, textRect.X, currentY + 5, textRect.Width, 10, portfolio.ClosedPnL, DailyLossLimit, ProfitTarget);
+                currentY += sliderExtraHeight;
+            }
+
+            // 3. Draw Open Orders directly underneath the Slider
+            if (orderLines.Count > 0)
+            {
+                var orderRect = new Rectangle(textRect.X, currentY, textRect.Width, orderLines.Count * lineHeight);
+                DrawColoredText(context, orderLines, orderRect, maxLabelWidth);
             }
         }
 
         #endregion
 
-#region Trade Visualization Methods
-        private void DrawPnlSlider(RenderContext context, Rectangle textRect, decimal currentPnL, int dllLimit, int targetLimit)
+        #region Trade Visualization Methods
+
+        private void DrawPnlSlider(RenderContext context, int sliderX, int sliderY, int sliderWidth, int sliderHeight, decimal currentPnL, int dllLimit, int targetLimit)
         {
-            int sliderWidth = textRect.Width;
-            int sliderHeight = 10;
-            int sliderX = textRect.X;
-            int sliderY = textRect.Y + textRect.Height - 12; // Adjusted buffer spacing
-
-            // If ProfitTarget is 0 or negative, treat it as an open-ended profit mode
             bool hasTarget = targetLimit > 0;
-
             decimal minVal = -dllLimit;
-            decimal maxVal = hasTarget ? targetLimit : 0m; // Pushes the 0 marker to the far right edge
+            decimal maxVal = hasTarget ? targetLimit : 0m;
 
             decimal clampedPnL = Math.Max(minVal, Math.Min(maxVal, currentPnL));
 
             float totalSpan = (float)(maxVal - minVal);
+            if (totalSpan <= 0) totalSpan = 1;
             float currentProgress = (float)(clampedPnL - minVal) / totalSpan;
 
-            // 1. Draw Background Bar Track
-            var trackRect = new Rectangle(sliderX, sliderY + 4, sliderWidth, sliderHeight - 4);
+            var trackRect = new Rectangle(sliderX, sliderY, sliderWidth, sliderHeight);
             context.FillRectangle(Color.FromArgb(50, 50, 60), trackRect);
 
-            // 2. Draw Negative Zone (Red tint up to zero point)
             decimal zeroProgress = (0m - minVal) / (decimal)totalSpan;
             int zeroX = sliderX + (int)(sliderWidth * (float)zeroProgress);
 
             if (zeroX > sliderX)
             {
-                var redZone = new Rectangle(sliderX, sliderY + 4, zeroX - sliderX, sliderHeight - 4);
+                var redZone = new Rectangle(sliderX, sliderY, zeroX - sliderX, sliderHeight);
                 context.FillRectangle(Color.FromArgb(120, 40, 40), redZone);
             }
 
-            // 3. Draw Positive Zone (Green tint) - ONLY if target exists
             if (hasTarget && sliderX + sliderWidth > zeroX)
             {
-                var greenZone = new Rectangle(zeroX, sliderY + 4, (sliderX + sliderWidth) - zeroX, sliderHeight - 4);
+                var greenZone = new Rectangle(zeroX, sliderY, (sliderX + sliderWidth) - zeroX, sliderHeight);
                 context.FillRectangle(Color.FromArgb(30, 100, 50), greenZone);
             }
 
-            // 4. Draw Zero Marker Line
             var linePen = new RenderPen(Color.FromArgb(180, 180, 180), 2);
-            context.DrawLine(linePen, zeroX, sliderY, zeroX, sliderY + sliderHeight);
+            context.DrawLine(linePen, zeroX, sliderY - 4, zeroX, sliderY + sliderHeight + 4);
 
-            // 5. Draw Current PnL Handle
             int handleX = sliderX + (int)(sliderWidth * currentProgress);
             int handleWidth = 4;
-            var handleRect = new Rectangle(handleX - (handleWidth / 2), sliderY - 1, handleWidth, sliderHeight + 4);
+            var handleRect = new Rectangle(handleX - (handleWidth / 2), sliderY - 2, handleWidth, sliderHeight + 4);
 
             context.FillRectangle(Color.White, handleRect);
             context.DrawRectangle(new RenderPen(Color.Black, 1), handleRect);
@@ -915,7 +921,35 @@ namespace Info_Display
 
         #region Account HUD & Risk Management Methods
 
-        private sealed record DisplayLine(string Label, string Value, decimal? RawForColoring, bool IsStatPair = false, decimal? RawForColoringRight = null);
+        private sealed record DisplayLine(string Label, string Value, decimal? RawForColoring, bool IsStatPair = false, decimal? RawForColoringRight = null, Color? ValueColorOverride = null);
+
+        private List<DisplayLine> BuildOrderLines(Portfolio p)
+        {
+            var lines = new List<DisplayLine>();
+            if (TradingManager?.Orders == null) return lines;
+
+            var openOrders = TradingManager.Orders
+                .Where(o => o.Portfolio?.AccountID == p.AccountID && o.State == OrderStates.Active)
+                .ToList();
+
+            if (openOrders.Any())
+            {
+                lines.Add(new("----------------", "---------", null));
+                lines.Add(new DisplayLine("[OPEN ORDERS]", $"{openOrders.Count} Active", null, ValueColorOverride: _neutralColor));
+
+                foreach (var o in openOrders)
+                {
+                    string dir = o.Direction == OrderDirections.Buy ? "Buy" : "Sell";
+                    Color dirCol = o.Direction == OrderDirections.Buy ? _buyColor : _sellColor;
+                    decimal price = o.Price > 0 ? o.Price : o.TriggerPrice;
+
+                    // Using QuantityToFill to get the order size
+                    lines.Add(new DisplayLine($"{dir} {o.QuantityToFill} {o.Security?.Code}", $"@ {FormatCurrency(price)}", null, ValueColorOverride: dirCol));
+                }
+            }
+
+            return lines;
+        }
 
         private List<DisplayLine> BuildLines(Portfolio p, decimal currentVolume)
         {
@@ -1055,12 +1089,6 @@ namespace Info_Display
                 lines.Add(new(bufferLabel, FormatCurrency(activeBuffer), null));
             }
 
-            if (ShowActivePosition && p.OpenPnL != 0m)
-            {
-                lines.Add(new("----------------", "---------", null));
-                lines.Add(new($"[ACTIVE TRADE] {displayAccount}", FormatCurrency(p.OpenPnL), p.OpenPnL));
-            }
-
             // --- TODAY'S STATS (Separated and Evenly Distributed 2-Column Format) ---
             if (ShowTodaysStats && _trades.Any())
             {
@@ -1093,14 +1121,13 @@ namespace Info_Display
                     decimal worstTrade = todaysTrades.Min(t => t.PnL);
                     decimal ev = (winRate * avgWin) - (lossRate * avgLoss);
 
-                    // Collect active stats into individual entries so they can be paired evenly 2-by-2 across columns
                     var activeStats = new List<(string Text, decimal? RawColor)>();
 
                     if (StatShowTrades)
                         activeStats.Add(($"Trades: {totalTrades}", null));
 
                     if (StatShowWins)
-                        activeStats.Add(($"Wins: {wins}", null));                    
+                        activeStats.Add(($"Wins: {wins}", null));
 
                     if (StatShowPerformance)
                         activeStats.Add(($"Edge: {performance:0.02}", performance >= 0.5m ? 1m : -1m));
@@ -1130,7 +1157,6 @@ namespace Info_Display
                     {
                         lines.Add(new("----------------", "---------", null));
 
-                        // Distribute evenly across 2 columns with independent coloring for both sides
                         for (int i = 0; i < activeStats.Count; i += 2)
                         {
                             string col1 = activeStats[i].Text;
@@ -1174,8 +1200,7 @@ namespace Info_Display
              : raw < 0m ? _negativeColor
                         : _neutralColor;
 
-        private void DrawColoredText(RenderContext context, List<DisplayLine> lines,
-    Rectangle textRect, int maxLabelWidth)
+        private void DrawColoredText(RenderContext context, List<DisplayLine> lines, Rectangle textRect, int maxLabelWidth)
         {
             var lineHeight = (int)context.MeasureString("A", _font).Height;
             var valueColumnX = textRect.X + maxLabelWidth + ColumnSpacing;
@@ -1185,15 +1210,16 @@ namespace Info_Display
             {
                 if (line.IsStatPair)
                 {
-                    // Stat rows: Color both the left and right items independently based on their own rules
                     context.DrawString(line.Label, _font, ColorFor(line.RawForColoring), textRect.X, currentY);
                     context.DrawString(line.Value, _font, ColorFor(line.RawForColoringRight), valueColumnX, currentY);
                 }
                 else
                 {
-                    // Standard HUD rows (Account, Balance, PnL): Static label on left, colored value on right
+                    // Prefer the explicit override color, otherwise fall back to standard PnL coloring
+                    Color rightColor = line.ValueColorOverride ?? ColorFor(line.RawForColoring);
+
                     context.DrawString(line.Label, _font, _textColor, textRect.X, currentY);
-                    context.DrawString(line.Value, _font, ColorFor(line.RawForColoring), valueColumnX, currentY);
+                    context.DrawString(line.Value, _font, rightColor, valueColumnX, currentY);
                 }
                 currentY += lineHeight;
             }
