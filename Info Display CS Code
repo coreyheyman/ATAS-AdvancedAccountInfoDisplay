@@ -1029,7 +1029,16 @@ namespace Info_Display
                             if (netClosedPnL > _lastNetClosedPnL)
                                 PlayAlert(AudioTradeWin, "Trade Win");
                             else if (netClosedPnL < _lastNetClosedPnL)
+                        {
+                            // Ignore micro-drops caused purely by commission deductions on trade entry
+                            decimal dropAmount = _lastNetClosedPnL - netClosedPnL;
+                            decimal activeComm = (DeductCommissions) ? (UseManualCommission ? (decimal)ManualCommissionPerContract : p.Commission) : 0m;
+                            
+                            if (dropAmount > activeComm + 0.01m)
+                            {
                                 PlayAlert(AudioTradeLoss, "Trade Loss");
+                            }
+                        }
                         }
 
                         _lastNetClosedPnL = netClosedPnL;
