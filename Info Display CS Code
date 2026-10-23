@@ -635,7 +635,18 @@ namespace Info_Display
 
             if (trade.AccountID == TradingManager.Portfolio.AccountID &&
                 trade.Security.SecurityId.Equals(TradingManager.Security.SecurityId, StringComparison.InvariantCultureIgnoreCase))
+            {
                 CreateTradePair(trade);
+
+                // ALERTS: Triggered strictly when a trade or scale-out physically closes
+                if (!_isFirstLoad && EnableAudioAlerts)
+                {
+                    if (trade.PnL > 0)
+                        PlayAlert(AudioTradeWin, "Trade Win");
+                    else if (trade.PnL < 0)
+                        PlayAlert(AudioTradeLoss, "Trade Loss");
+                }
+            }
         }
 
         private void CreateTradePair(HistoryMyTrade trade)
@@ -1024,22 +1035,6 @@ namespace Info_Display
                             PlayAlert(AudioDllHit, "Daily Loss Limit Hit!");
                             _dllHit = true;
                         }
-                        else
-                        {
-                            if (netClosedPnL > _lastNetClosedPnL)
-                                PlayAlert(AudioTradeWin, "Trade Win");
-                            else if (netClosedPnL < _lastNetClosedPnL)
-                        {
-                            // Ignore micro-drops caused purely by commission deductions on trade entry
-                            decimal dropAmount = _lastNetClosedPnL - netClosedPnL;
-                            decimal activeComm = (DeductCommissions) ? (UseManualCommission ? (decimal)ManualCommissionPerContract : p.Commission) : 0m;
-                            
-                            if (dropAmount > activeComm + 0.01m)
-                            {
-                                PlayAlert(AudioTradeLoss, "Trade Loss");
-                            }
-                        }
-                        }
 
                         _lastNetClosedPnL = netClosedPnL;
                     }
@@ -1098,7 +1093,7 @@ namespace Info_Display
                 lines.Add(new(bufferLabel, FormatCurrency(activeBuffer), null));
             }
 
-            // --- TODAY'S STATS (Separated and Evenly Distributed 2-Column Format) ---
+            // --- TODAY'S STATS ---
             if (ShowTodaysStats && _trades.Any())
             {
                 var today = DateTime.Today;
